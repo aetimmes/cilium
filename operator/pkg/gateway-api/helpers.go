@@ -5,6 +5,7 @@ package gateway_api
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	corev1 "k8s.io/api/core/v1"
@@ -177,4 +178,23 @@ func mergeMap(left, right map[string]string) map[string]string {
 func setMergedLabelsAndAnnotations(temp, desired client.Object) {
 	temp.SetAnnotations(mergeMap(temp.GetAnnotations(), desired.GetAnnotations()))
 	temp.SetLabels(mergeMap(temp.GetLabels(), desired.GetLabels()))
+}
+
+// hasCiliumManagedGateway checks if any of the route's parent refs point to a Cilium-managed gateway.
+// Returns true if at least one parent gateway is managed by Cilium, false otherwise.
+func hasCiliumManagedGateway(ctx context.Context, c client.Client, parentRefs []gatewayv1.ParentReference, getGatewayFn func(ref gatewayv1.ParentReference) (*gatewayv1.Gateway, error), logger *slog.Logger) (bool, error) {
+	for _, parent := range parentRefs {
+		if (parent.Group == nil || *parent.Group == gatewayv1.GroupName) &&
+			(parent.Kind == nil || *parent.Kind == kindGateway) {
+
+			gw, err := getGatewayFn(parent)
+			if err != nil {
+				return false, fmt.Errorf("failed to get Gateway: %w", err)
+			}
+			if hasMatchingController(ctx, c, controllerName, logger)(gw) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }

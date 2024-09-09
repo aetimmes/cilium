@@ -65,6 +65,16 @@ func (r *grpcRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		GRPCRoute: gr,
 	}
 
+	// Ignore routes without a Cilium-manged gateway
+	managed, err := hasCiliumManagedGateway(ctx, r.Client, gr.Spec.ParentRefs, i.GetGateway, r.logger)
+	if err != nil {
+		return r.handleReconcileErrorWithStatus(ctx, err, original, gr)
+	}
+	if !managed {
+		scopedLog.Info("No Cilium-managed Gateway found for GRPCRoute, skipping")
+		return controllerruntime.Success()
+	}
+
 	// gateway validators
 	for _, parent := range gr.Spec.ParentRefs {
 		// set acceptance to okay, this wil be overwritten in checks if needed

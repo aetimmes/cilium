@@ -61,6 +61,16 @@ func (r *httpRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		HTTPRoute: hr,
 	}
 
+	// Ignore routes without a Cilium-manged gateway
+	managed, err := hasCiliumManagedGateway(ctx, r.Client, hr.Spec.ParentRefs, i.GetGateway, r.logger)
+	if err != nil {
+		return r.handleReconcileErrorWithStatus(ctx, err, original, hr)
+	}
+	if !managed {
+		scopedLog.Info("No Cilium-managed Gateway found for HTTPRoute, skipping")
+		return controllerruntime.Success()
+	}
+
 	// gateway validators
 	for _, parent := range hr.Spec.ParentRefs {
 

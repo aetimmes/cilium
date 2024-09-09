@@ -94,13 +94,23 @@ var (
 	}
 
 	httpRouteFixture = []client.Object{
-		// GatewayClass
+		// Cilium GatewayClass
 		&gatewayv1.GatewayClass{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "cilium",
 			},
 			Spec: gatewayv1.GatewayClassSpec{
 				ControllerName: "io.cilium/gateway-controller",
+			},
+		},
+
+		// Non-Cilium GatewayClass
+		&gatewayv1.GatewayClass{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "non-cilium",
+			},
+			Spec: gatewayv1.GatewayClassSpec{
+				ControllerName: "non-cilium-controller",
 			},
 		},
 
@@ -112,6 +122,25 @@ var (
 			},
 			Spec: gatewayv1.GatewaySpec{
 				GatewayClassName: "cilium",
+				Listeners: []gatewayv1.Listener{
+					{
+						Name:     "http",
+						Port:     80,
+						Hostname: ptr.To[gatewayv1.Hostname]("*.cilium.io"),
+					},
+				},
+			},
+			Status: gatewayv1.GatewayStatus{},
+		},
+
+		// Gateway for non-Cilium GatewayClass
+		&gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "non-cilium-gateway",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.GatewaySpec{
+				GatewayClassName: "non-cilium",
 				Listeners: []gatewayv1.Listener{
 					{
 						Name:     "http",
@@ -878,6 +907,37 @@ var (
 			},
 		},
 
+		// HTTPRoute with non-Cilium gateway
+		&gatewayv1.HTTPRoute{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "http-route-with-non-cilium-gateway",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.HTTPRouteSpec{
+				CommonRouteSpec: gatewayv1.CommonRouteSpec{
+					ParentRefs: []gatewayv1.ParentReference{
+						{
+							Name: "non-cilium-gateway",
+						},
+					},
+				},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "dummy-backend",
+										Port: ptr.To[gatewayv1.PortNumber](8080),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+
 		// HTTPRoute with non-matching hostname with gateway listener
 		&gatewayv1.HTTPRoute{
 			ObjectMeta: metav1.ObjectMeta{
@@ -1074,22 +1134,14 @@ func Test_httpRouteReconciler_Reconcile(t *testing.T) {
 			NamespacedName: key,
 		})
 
-		require.NoError(t, err, "Error reconciling httpRoute")
+		require.Error(t, err, "Error reconciling httpRoute")
 		require.Equal(t, ctrl.Result{}, result, "Result should be empty")
 
 		route := &gatewayv1.HTTPRoute{}
 		err = c.Get(context.Background(), key, route)
 
 		require.NoError(t, err)
-		require.Len(t, route.Status.RouteStatus.Parents, 1, "Should have 1 parent")
-		require.Len(t, route.Status.RouteStatus.Parents[0].Conditions, 2)
-
-		require.Equal(t, "Accepted", route.Status.RouteStatus.Parents[0].Conditions[0].Type)
-		require.Equal(t, metav1.ConditionStatus("False"), route.Status.RouteStatus.Parents[0].Conditions[0].Status)
-		require.Equal(t, "InvalidHTTPRoute", route.Status.RouteStatus.Parents[0].Conditions[0].Reason)
-
-		require.Equal(t, "ResolvedRefs", route.Status.RouteStatus.Parents[0].Conditions[1].Type)
-		require.Equal(t, metav1.ConditionStatus("True"), route.Status.RouteStatus.Parents[0].Conditions[1].Status)
+		require.Empty(t, route.Status.RouteStatus.Parents, "Should have 0 parents")
 	})
 
 	t.Run("http route with valid but not allowed gateway", func(t *testing.T) {
@@ -1286,6 +1338,25 @@ func Test_httpRouteReconciler_Reconcile(t *testing.T) {
 			require.Equal(t, "InvalidKind", route.Status.RouteStatus.Parents[0].Conditions[1].Reason)
 			require.Equal(t, "Must have port for backend object reference", route.Status.RouteStatus.Parents[0].Conditions[1].Message)
 		}
+	})
+
+	t.Run("http route with non-Cilium gateway", func(t *testing.T) {
+		key := types.NamespacedName{
+			Name:      "http-route-with-non-cilium-gateway",
+			Namespace: "default",
+		}
+		result, err := r.Reconcile(context.Background(), ctrl.Request{
+			NamespacedName: key,
+		})
+
+		require.NoError(t, err, "Error reconciling httpRoute")
+		require.Equal(t, ctrl.Result{}, result, "Result should be empty")
+
+		route := &gatewayv1.HTTPRoute{}
+		err = c.Get(context.Background(), key, route)
+
+		require.NoError(t, err)
+		require.Empty(t, route.Status.RouteStatus.Parents, "Should have 0 parents")
 	})
 }
 
